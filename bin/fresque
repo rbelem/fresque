@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # fresque: quality wallpapers for Omarchy, with nothing to configure.
 #
 # Every network call and every piece of JSON handling lives here. The QML
@@ -18,7 +18,7 @@ INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 STAGED_FILE="$STATE_DIR/staged.tsv"
 
-CONFIG_VERSION=10
+CONFIG_VERSION=11
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
@@ -92,8 +92,9 @@ urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
 # shaped" and "is it a reasonable download".
 remote_probe() {
   local tmp hdr dims total
-  tmp="$STATE_DIR/probe.$$" || return 1
-  hdr="$STATE_DIR/probe-hdr.$$" || { rm -f "$tmp"; return 1; }
+  ensure_dir "$STATE_DIR" || return 1
+  tmp=$(mktemp "$STATE_DIR/.probe.XXXXXX") || return 1
+  hdr=$(mktemp "$STATE_DIR/.probe-hdr.XXXXXX") || { rm -f "$tmp"; return 1; }
   # The body goes through a pipe so that a server which ignores the range is cut
   # at 64 KB instead of filling the state directory until the timeout. The
   # headers go to their own file, which is bounded by the same timeout.
@@ -146,7 +147,15 @@ library_dir() {
   printf '%s' "${dir/#\~/$HOME}"
 }
 
-theme_name() { cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "default"; }
+# The theme name is a directory name here, and the file it comes from is state
+# the shell writes. Only characters a theme name can hold survive, so nothing in
+# it can add a path element to the folder below.
+theme_name() {
+  local name
+  name=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null) || name=""
+  name=${name//[^A-Za-z0-9._-]/}
+  printf '%s' "${name:-default}"
+}
 
 # Favourites live in a subfolder of the library, and the pruning code never
 # looks there: a picture the user singled out is the one thing in this plugin
@@ -253,18 +262,20 @@ verify_image() {
 # ---------------------------------------------------------------- config
 
 DEFAULT_CONFIG='{
-  "version": 10,
+  "version": 11,
   "rotateMinutes": 1440,
-  "sources": { "bing": true, "wikimedia": true, "noirlab": true, "omarchy": true, "konachan": true, "yandere": true, "picsum": true },
+  "sources": { "bing": true, "wikimedia": true, "noirlab": true, "omarchy": true, "konachan": true, "yandere": true, "picsum": true, "wallhaven": true, "local": false },
   "themes": { "nature": true, "space": true, "architecture": true, "animals": true, "photos": true, "anime": true },
   "keepLast": 30,
   "favoritesOnly": false,
   "language": "auto",
   "expose": true,
-  "library": ""
+  "library": "",
+  "wallhavenQuery": "",
+  "localDir": "~/Pictures/Wallpapers"
 }'
 
-CONFIG_KEYS="rotateMinutes keepLast expose favoritesOnly language library sources.<id> themes.<id>"
+CONFIG_KEYS="rotateMinutes keepLast expose favoritesOnly language library wallhavenQuery localDir sources.<id> themes.<id>"
 
 ensure_config() {
   if [[ -f $CONFIG_FILE ]]; then
@@ -339,6 +350,17 @@ cfg_set() {
     library)
       [[ -z $value || $value == /* ]] || die "library must be an absolute path or empty"
       tmp=$(jq --arg v "$value" '.library = $v' "$CONFIG_FILE") ;;
+    wallhavenQuery)
+      # The query goes into a URL and into a jq program, so it is kept to the
+      # characters a search phrase needs: letters, digits, spaces and the two
+      # separators those are usually written with.
+      value=${value//[^A-Za-z0-9 _-]/}
+      [[ ${#value} -le 60 ]] || die "wallhavenQuery must be at most 60 characters"
+      tmp=$(jq --arg v "$value" '.wallhavenQuery = $v' "$CONFIG_FILE") ;;
+    localDir)
+      [[ -z $value || $value == /* || $value == "~/"* ]] || die "localDir must be an absolute path, a ~/ path, or empty"
+      tmp=$(jq --arg v "$value" '.localDir = $v' "$CONFIG_FILE")
+      pool_stale=1 ;;
     sources.*)
       local src=${key#sources.}
       is_source "$src" || die "unknown source: $src"
@@ -383,13 +405,13 @@ CATALOG='{
   "anime":        { "konachan": "landscape,sky,night,city,water,cherry_blossoms,flowers,clouds,stars,sunset,winter,moon,building", "yandere": "landscape,flowers,city,stars" }
 }'
 
-SOURCE_IDS="bing wikimedia noirlab omarchy konachan yandere picsum"
+SOURCE_IDS="bing wikimedia noirlab omarchy konachan yandere picsum wallhaven local"
 # A weight is how often a source is asked, and it should follow what the source
 # can add. A feed that publishes one picture a week (NOIRLab has 24 in all) is
 # spent in a few days at a high weight, and then silent for a week, which reads
 # as either a repeat or a disappearance. The sources with thousands of pictures
 # carry the rotation.
-SOURCE_WEIGHTS="bing=4 wikimedia=30 noirlab=5 omarchy=8 konachan=15 yandere=12 picsum=10"
+SOURCE_WEIGHTS="bing=4 wikimedia=30 noirlab=5 omarchy=8 konachan=15 yandere=12 picsum=10 wallhaven=16 local=6"
 
 is_source() { [[ " $SOURCE_IDS " == *" $1 "* ]]; }
 
@@ -402,6 +424,8 @@ source_label() {
     konachan)  printf 'Konachan' ;;
     yandere)   printf 'Yande.re' ;;
     picsum)    printf 'Unsplash' ;;
+    wallhaven) printf 'Wallhaven' ;;
+    local)     printf 'Your pictures' ;;
   esac
 }
 
@@ -449,6 +473,10 @@ source_themes() {
     konachan)  printf 'anime' ;;
     yandere)   printf 'anime' ;;
     picsum)    printf 'photos' ;;
+    wallhaven) printf 'photos' ;;
+    # A folder of the user's own pictures is not curated around a subject, so it
+    # is offered under every theme rather than being called "photos".
+    local)     printf '%s' "$THEME_IDS" ;;
   esac
 }
 
@@ -738,9 +766,42 @@ candidates_noirlab() {
 # so this source costs no request, no download and no copy: the picture is put
 # on screen where it lies. The directory Fresque writes its own links into is
 # left out, otherwise the source would end up serving its own choices back.
+# The directory Omarchy's own themes, scripts and default wallpapers sit in.
+# OMARCHY_PATH wins when the distribution sets one; otherwise the omarchy on
+# PATH decides, which is the one that will apply the picture anyway. Both the
+# Arch layout (/usr/bin/omarchy) and the store layout on NixOS
+# (.../share/omarchy/bin/omarchy) resolve to the same place.
+omarchy_root() {
+  local bin dir
+  if [[ -n ${OMARCHY_PATH:-} && -d $OMARCHY_PATH/themes ]]; then
+    printf '%s' "$OMARCHY_PATH"
+    return 0
+  fi
+  bin=$(command -v omarchy 2>/dev/null) || return 1
+  bin=$(readlink -f "$bin" 2>/dev/null) || return 1
+  dir=$(dirname "$bin")
+  if [[ -d $dir/../themes ]]; then
+    (cd "$dir/.." && pwd) && return 0
+  fi
+  if [[ -d $dir/../share/omarchy/themes ]]; then
+    (cd "$dir/../share/omarchy" && pwd) && return 0
+  fi
+  return 1
+}
+
 omarchy_wallpaper_dirs() {
-  local d
-  for d in /usr/share/omarchy/themes/*/backgrounds "$HOME/.config/omarchy/themes"/*/backgrounds; do
+  local d root
+  # Where the themes that ship with Omarchy live. Arch installs them under
+  # /usr/share/omarchy, a Nix store path is somewhere else entirely, so the
+  # prefix is taken from the omarchy that will be asked to apply the picture
+  # instead of being spelled out here.
+  if root=$(omarchy_root); then
+    for d in "$root"/themes/*/backgrounds; do
+      [[ -d $d ]] && printf '%s\n' "$d"
+    done
+  fi
+  for d in "$HOME/.config/omarchy/themes"/*/backgrounds \
+    "$HOME/.local/state/omarchy/current/theme/backgrounds"; do
     [[ -d $d ]] && printf '%s\n' "$d"
   done
 }
@@ -763,13 +824,40 @@ candidates_omarchy() {
         '. + [{source: "omarchy", id: $id, theme: $theme, local: $path, full: $path, alt: "", thumb: $path,
                width: $w, height: $h, credit: ("Omarchy, " + $label + " theme"),
                link: "https://omarchy.org/", license: "Shipped with Omarchy"}]' <<<"$out")
-    done < <(find "$dir" -maxdepth 1 -type f \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null)
+    done < <(find -L "$dir" -maxdepth 1 -type f \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null)
   done < <(omarchy_wallpaper_dirs)
   printf '%s' "$out"
 }
 
-candidates_picsum() {
-  local min_w=$1 min_h=$2 page
+# Wallhaven is the largest curated wallpaper site and its public search needs no
+# key for the safe pool. SFW, general category, landscape shape and a minimum
+# size are part of the query, so a request is never spent on something the size
+# gate would refuse.
+# shortcut: the toplist of the last year only, no account pools or collections;
+# add those behind an optional apikey if the plain pool stops being enough.
+candidates_wallhaven() {
+  local theme=$1 min_w=$2 min_h=$3 query url
+  query=$(cfg wallhavenQuery)
+  url="https://wallhaven.cc/api/v1/search?categories=100&purity=100&sorting=toplist&order=desc&topRange=1y&ratios=landscape&atleast=${min_w}x${min_h}&page=$((RANDOM % 5 + 1))"
+  [[ -n $query ]] && url+="&q=$(urlencode "$query")"
+  curl_json "$url" |
+    jq -c --arg theme "$theme" --argjson minw "$min_w" --argjson minh "$min_h" '
+      [.data[]? | {
+        source: "wallhaven",
+        id: (.id // ""),
+        theme: $theme,
+        full: (.path // ""),
+        alt: (.thumbs.original // ""),
+        thumb: (.thumbs.small // .thumbs.original // ""),
+        width: ((.dimension_x // 0) | try tonumber catch 0),
+        height: ((.dimension_y // 0) | try tonumber catch 0),
+        credit: ("Wallhaven, " + (.uploader.username // "unknown")),
+        link: (if (.id // "") == "" then "https://wallhaven.cc" else "https://wallhaven.cc/w/" + .id end),
+        license: "Wallhaven, credited to its uploader"
+      } | select(.id != "" and .full != "" and .width >= $minw and .height >= $minh)]'
+}
+
+candidates_picsum() {  local min_w=$1 min_h=$2 page
   page=$((RANDOM % 12 + 1))
   curl_json "https://picsum.photos/v2/list?page=$page&limit=40" |
     jq -c --argjson minw "$min_w" --argjson minh "$min_h" \
@@ -801,6 +889,8 @@ fetch_candidates() {
     yandere)   rows=$(candidates_yandere "$theme" "$min_w" "$min_h") ;;
     omarchy)   rows=$(candidates_omarchy "$theme" "$min_w" "$min_h") ;;
     picsum)    rows=$(candidates_picsum "$min_w" "$min_h") ;;
+    wallhaven) rows=$(candidates_wallhaven "$theme" "$min_w" "$min_h") ;;
+    local)     rows=$(candidates_local "$theme" "$min_w" "$min_h") ;;
     *)         printf '[]'; return 0 ;;
   esac
   [[ -n $rows && $rows != "null" ]] || { printf '[]'; return 0; }
@@ -954,9 +1044,9 @@ mark_seen() {
   fi
 }
 
-was_seen() { [[ -f $SEEN_FILE ]] && grep -qxF "$1	$2" "$SEEN_FILE"; }
+was_seen() { [[ -f $SEEN_FILE ]] && grep -qxF -- "$1	$2" "$SEEN_FILE"; }
 
-is_blocked() { [[ -f $BLOCKED_FILE ]] && grep -qxF "$1	$2" "$BLOCKED_FILE"; }
+is_blocked() { [[ -f $BLOCKED_FILE ]] && grep -qxF -- "$1	$2" "$BLOCKED_FILE"; }
 
 block_item() {
   ensure_dir "$STATE_DIR"
@@ -1057,8 +1147,10 @@ normalise_image() {
   fi
   # Nothing installed to re-encode with: a JPEG is taken as it is, because a
   # JPEG cannot describe a canvas or carry text the way a PNG can, and anything
-  # else is refused rather than handed over.
-  case $src in *.jpg|*.jpeg|*.JPG|*.JPEG) mv -f "$src" "$dest" ;; *) return 1 ;; esac
+  # else is refused rather than handed over. The name says nothing about the
+  # format, so the header decides, not the suffix.
+  is_jpeg_file "$src" || return 1
+  mv -f "$src" "$dest"
   verify_image "$dest" || return 1
   return 0
 }
@@ -1191,6 +1283,31 @@ apply_photo() {
   return 0
 }
 
+# A folder of the user's own pictures. It costs no request, it works with no
+# network, and it is the one thing every other wallpaper plugin offers that a
+# rotation of other people's feeds cannot.
+candidates_local() {
+  local theme=$1 min_w=$2 min_h=$3 dir f dims w h out="[]"
+  dir=$(cfg localDir)
+  dir=${dir/#\~/$HOME}
+  [[ -n $dir && -d $dir ]] || { printf '[]'; return 0; }
+  while IFS= read -r f; do
+    [[ -f $f ]] || continue
+    dims=$(image_dimensions "$f") || continue
+    w=$(dimension "${dims% *}") || continue
+    h=$(dimension "${dims##* }") || continue
+    ((w >= min_w && h >= min_h)) || continue
+    pixels_ok "$w" "$h" || continue
+    aspect_ok "$w" "$h" || continue
+    out=$(jq -c --arg theme "$theme" --arg path "$f" --argjson w "$w" --argjson h "$h" \
+      '. + [{source: "local", id: ("local-" + ($path | split("/") | last)), theme: $theme,
+             local: $path, full: $path, alt: "", thumb: $path,
+             width: $w, height: $h, credit: "Your own picture", link: "", license: "Your own"}]' <<<"$out")
+  done < <(find -L "$dir" -maxdepth 1 -type f \
+    \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null | head -60)
+  printf '%s' "$out"
+}
+
 # The staged pool: a few wallpapers downloaded ahead of time. Applying one of
 # them needs no network at all, which is what makes asking for the next
 # wallpaper feel immediate.
@@ -1206,7 +1323,7 @@ stage_add() {
   local path=$1
   [[ -n $path && -f $path ]] || return 1
   ensure_dir "$STATE_DIR"
-  if [[ -f $STAGED_FILE ]] && grep -qxF "$path" "$STAGED_FILE"; then return 0; fi
+  if [[ -f $STAGED_FILE ]] && grep -qxF -- "$path" "$STAGED_FILE"; then return 0; fi
   printf '%s\n' "$path" >>"$STAGED_FILE"
   return 0
 }
@@ -1250,7 +1367,7 @@ stage_pop() {
 }
 
 is_staged() {
-  [[ -f $STAGED_FILE ]] && grep -qxF "$1" "$STAGED_FILE"
+  [[ -f $STAGED_FILE ]] && grep -qxF -- "$1" "$STAGED_FILE"
 }
 
 # A pool filled under other filters is worse than an empty one: the next click
@@ -1340,7 +1457,10 @@ cmd_prefetch() {
   ensure_config
   local want=${1:-2} wh min_w min_h src theme rows pick path count attempts=0
   ensure_dir "$STATE_DIR"
-  exec 9>"$STATE_DIR/prefetch.lock" 2>/dev/null || return 0
+  # A symlink planted at the lock path would redirect the open, so it is
+  # refused rather than followed.
+  [[ -L $STATE_DIR/prefetch.lock ]] && return 0
+  exec 9>>"$STATE_DIR/prefetch.lock" 2>/dev/null || return 0
   flock -n 9 || return 0
 
   count=$(stage_count)

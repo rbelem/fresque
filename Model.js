@@ -15,6 +15,8 @@ var SOURCES = [
   { id: "konachan",  label: "Konachan",  themes: ["anime"] },
   { id: "yandere",   label: "Yande.re",  themes: ["anime"] },
   { id: "picsum",    label: "Unsplash",  themes: ["photos"] },
+  { id: "wallhaven", label: "Wallhaven", themes: ["photos"] },
+  { id: "local",     label: "Your pictures", themes: ["nature", "space", "architecture", "animals", "photos", "anime"] },
   { id: "omarchy",   label: "Omarchy",   themes: ["photos"] }
 ]
 

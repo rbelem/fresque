@@ -21,7 +21,7 @@ then takes a new one every day.
 
 | | |
 |---|---|
-| **Seven sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, NOIRLab's image of the week for the night sky, the wallpapers Omarchy itself ships, Konachan and Yande.re anime art, and Unsplash photographs served through Picsum |
+| **Nine sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, NOIRLab's image of the week for the night sky, the wallpapers Omarchy itself ships, Konachan and Yande.re anime art, Unsplash photographs served through Picsum, Wallhaven's safe toplist, and a folder of your own pictures |
 | **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, the file's real size is measured again after the download, and obvious non-photographs (museum specimens, murals, maps, diagrams) are filtered out by keyword |
 | **Nothing you would not want decoded** | A picture is kept at twice your screen at most, never above 50 megapixels or 12000 pixels on a side, and it is re-encoded on the way in. The shell only ever opens a plain JPEG this plugin wrote, so the metadata a file can carry, the canvas it can claim and the colours it can declare stay in the short lived tool that read it |
 | **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen, and a source that cannot serve the chosen themes is not queried at all. Switching every theme off means nothing is filtered, rather than nothing is allowed |
@@ -51,6 +51,8 @@ author and its licence in the panel.
 | Omarchy | The wallpapers shipped with your Omarchy themes, plus the ones in your own theme folders. Already on the disk, so nothing is downloaded and nothing is copied: the picture is put on screen where it lies, and "Not this one" blocks it without deleting it | Shipped with Omarchy |
 | Konachan, Yande.re | Anime art at 4K and beyond, for the Anime theme | Fan art, credited to its artist |
 | Unsplash via Picsum | Photographs, theme "Photos" | Unsplash License |
+| Wallhaven | The safe pool: the last year's top landscape wallpapers, optionally narrowed by a search phrase (`wallhavenQuery`) | Wallhaven, credited to its uploader |
+| Your pictures | A folder of your own (default `~/Pictures/Wallpapers`, set with `localDir`), used where it lies. No request, so it rotates offline | Your own |
 
 Every request to Konachan and Yande.re is pinned to the safe rating and to your
 screen size, so nothing else can come back from them. The panel dims a source
@@ -100,7 +102,9 @@ fresque config set keepLast 50          # how many images the library may hold
 fresque config set favoritesOnly true   # rotate over the favorites only
 fresque config set language ja          # auto or en zh hi es fr ar pt ru ja de it ko tr
 fresque config set themes.space false   # turn a theme off (nature space architecture animals photos anime)
-fresque config set sources.noirlab false # turn a source off (bing wikimedia noirlab konachan yandere picsum)
+fresque config set sources.noirlab false # turn a source off (bing wikimedia noirlab konachan yandere picsum wallhaven omarchy local)
+fresque config set wallhavenQuery mountains  # narrow the Wallhaven pool to a search phrase
+fresque config set localDir ~/Pictures/Wallpapers  # the folder the "Your pictures" source reads
 ```
 
 The script lives at `~/.config/omarchy/plugins/io.github.shika34.fresque/bin/fresque`.
@@ -131,6 +135,23 @@ Everything Fresque needs is already on an Omarchy install: `bash`, `curl` and
 `jq`. Measuring a picture uses `vipsheader` or `magick` when one of the two is
 present, and falls back to the size the source declares when neither is. The
 interface is QML on the Quickshell that Omarchy ships.
+
+### NixOS
+
+Two things are different there, and both are handled in the script rather than
+being left for the user to work around:
+
+- The shebang is `#!/usr/bin/env bash`, because a NixOS system has no `/bin/bash`
+  and the shell executes this file directly.
+- Omarchy's own themes are not under `/usr/share/omarchy`. The prefix is taken
+  from the `omarchy` on PATH (`OMARCHY_PATH` wins when it is set), and the
+  current theme's background folder is read as well, so the "Omarchy" source
+  finds the shipped wallpapers on a store path exactly as it does on Arch.
+
+`jq`, `curl`, `file` and ImageMagick still have to be on the PATH the shell runs
+Fresque with, which on NixOS means installing the plugin through a derivation
+that wraps it (see `pkgs/fresque` in a nix configuration) instead of `omarchy
+plugin add`.
 
 ## What leaves the machine
 
@@ -168,8 +189,9 @@ rm -rf ~/Pictures/Fresque ~/.local/state/fresque ~/.config/omarchy/fresque.json
 
 ## What it does not do
 
-- No custom sources. The seven that ship are the ones that can be used without
-  an API key and without scraping a website.
+- No sources beyond the nine that ship. They are the ones that can be used without
+  an API key and without scraping a website; Wallhaven is read through its public
+  search, which needs no key for the safe pool.
 - No separate wallpaper per screen. Omarchy draws one background across every
   screen, so Fresque picks pictures that fit your largest one instead.
 - No video, no shader, no animated background.
