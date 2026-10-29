@@ -18,7 +18,7 @@ INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 STAGED_FILE="$STATE_DIR/staged.tsv"
 
-CONFIG_VERSION=11
+CONFIG_VERSION=12
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
@@ -262,9 +262,9 @@ verify_image() {
 # ---------------------------------------------------------------- config
 
 DEFAULT_CONFIG='{
-  "version": 11,
+  "version": 12,
   "rotateMinutes": 1440,
-  "sources": { "bing": true, "wikimedia": true, "noirlab": true, "omarchy": true, "konachan": true, "yandere": true, "picsum": true, "wallhaven": true, "local": false },
+  "sources": { "bing": true, "wikimedia": true, "noirlab": true, "omarchy": true, "konachan": true, "yandere": true, "picsum": true, "wallhaven": true, "nasa": true, "hubble": true, "local": false },
   "themes": { "nature": true, "space": true, "architecture": true, "animals": true, "photos": true, "anime": true },
   "keepLast": 30,
   "favoritesOnly": false,
@@ -405,13 +405,13 @@ CATALOG='{
   "anime":        { "konachan": "landscape,sky,night,city,water,cherry_blossoms,flowers,clouds,stars,sunset,winter,moon,building", "yandere": "landscape,flowers,city,stars" }
 }'
 
-SOURCE_IDS="bing wikimedia noirlab omarchy konachan yandere picsum wallhaven local"
+SOURCE_IDS="bing wikimedia noirlab omarchy konachan yandere picsum wallhaven nasa hubble local"
 # A weight is how often a source is asked, and it should follow what the source
 # can add. A feed that publishes one picture a week (NOIRLab has 24 in all) is
 # spent in a few days at a high weight, and then silent for a week, which reads
 # as either a repeat or a disappearance. The sources with thousands of pictures
 # carry the rotation.
-SOURCE_WEIGHTS="bing=4 wikimedia=30 noirlab=5 omarchy=8 konachan=15 yandere=12 picsum=10 wallhaven=16 local=6"
+SOURCE_WEIGHTS="bing=4 wikimedia=30 noirlab=5 omarchy=8 konachan=15 yandere=12 picsum=10 wallhaven=16 nasa=12 hubble=6 local=6"
 
 is_source() { [[ " $SOURCE_IDS " == *" $1 "* ]]; }
 
@@ -424,6 +424,8 @@ source_label() {
     konachan)  printf 'Konachan' ;;
     yandere)   printf 'Yande.re' ;;
     picsum)    printf 'Unsplash' ;;
+    nasa)      printf 'NASA' ;;
+    hubble)    printf 'ESA/Hubble' ;;
     wallhaven) printf 'Wallhaven' ;;
     local)     printf 'Your pictures' ;;
   esac
@@ -466,13 +468,22 @@ theme_block() { jq -r --arg t "$1" '.[$t] // ""' <<<"$THEME_BLOCK" 2>/dev/null; 
 # landscape into a request for animals or space.
 source_themes() {
   case $1 in
-    bing)      printf 'photos' ;;
+    # Bing is one picture a day chosen by someone else: a landscape, an animal,
+    # a building, rarely a photograph of nothing in particular. Calling it
+    # "photos" meant a rotation filtered to nature or animals never asked for
+    # it, which is the opposite of what the picture usually is. It cannot be
+    # classified before it is fetched, so like the user's own folder it is
+    # offered under every theme, and the theme it is served under is the theme
+    # that asked for it.
+    bing)      printf '%s' "$THEME_IDS" ;;
     wikimedia) printf 'nature space architecture animals' ;;
     noirlab)   printf 'space' ;;
     omarchy)   printf 'photos' ;;
     konachan)  printf 'anime' ;;
     yandere)   printf 'anime' ;;
     picsum)    printf 'photos' ;;
+    nasa)      printf 'space nature' ;;
+    hubble)    printf 'space' ;;
     wallhaven) printf 'photos' ;;
     # A folder of the user's own pictures is not curated around a subject, so it
     # is offered under every theme rather than being called "photos".
@@ -605,12 +616,12 @@ aspect_ok() {
 # same photograph coming back, which is what it looked like. Only the ones never
 # shown are offered, and nothing at all once all eight have been seen.
 candidates_bing() {
-  local rows
+  local rows theme=$1
   rows=$(curl_json "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-US" |
-    jq -c '[.images[]? | {
+    jq -c --arg theme "$theme" '[.images[]? | {
       source: "bing",
       id: (.startdate // .enddate),
-      theme: "photos",
+      theme: $theme,
       full: ("https://www.bing.com" + .urlbase + "_UHD.jpg&pid=hp"),
       alt: ("https://www.bing.com" + (.url // "")),
       thumb: ("https://www.bing.com" + (.url // "")),
@@ -759,6 +770,87 @@ candidates_noirlab() {
   done
   printf '%s' "$rows"
 }
+# The last two sources are archives whose feed says nothing about how big a
+# picture is, and whose originals run from 2 MP to a stitched panorama of 140 MP.
+# Measuring the header of a candidate costs 64 KB and settles both the shape and
+# the weight, so nothing huge is downloaded only to be refused.
+# Ten at a time: a probe is cheap but not free, and one wallpaper is enough.
+probe_rows() {
+  local rows=$1 min_w=$2 min_h=$3 keep="[]" row full dims w h size
+  for row in $(jq -r '.[] | @base64' <<<"$rows" 2>/dev/null | shuf -n 10); do
+    row=$(printf '%s' "$row" | base64 -d 2>/dev/null)
+    [[ -n $row ]] || continue
+    full=$(jq -r '.full // ""' <<<"$row")
+    case $full in https://*) ;; *) continue ;; esac
+    dims=$(remote_probe "$full") || continue
+    w=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f1)") || continue
+    h=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f2)") || continue
+    size=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f3)") || size=0
+    ((w >= min_w && h >= min_h)) || continue
+    pixels_ok "$w" "$h" || continue
+    aspect_ok "$w" "$h" || continue
+    ((size > 8000000)) && continue
+    row=$(jq -c --argjson w "$w" --argjson h "$h" '.width = $w | .height = $h' <<<"$row")
+    keep=$(jq -c --argjson r "$row" '. + [$r]' <<<"$keep")
+  done
+  printf '%s' "$keep"
+}
+
+# The NASA Image and Video Library is public domain, needs no key, and holds a
+# hundred and forty thousand images: nebulae, galaxies, and the Earth seen from
+# orbit, which is what makes it usable for the nature theme as well as space.
+# The search returns previews; the original beside them is the wallpaper.
+NASA_QUERIES='{"space":"nebula galaxy stars","nature":"earth mountains coast"}'
+
+candidates_nasa() {
+  local theme=$1 min_w=$2 min_h=$3 q rows
+  q=$(jq -r --arg t "$theme" '.[$t] // "space"' <<<"$NASA_QUERIES" 2>/dev/null)
+  rows=$(curl_json "https://images-api.nasa.gov/search?media_type=image&q=$(urlencode "$q")&page_size=60" |
+    jq -c --arg theme "$theme" '
+      [.collection.items[]? | select(.data[0].nasa_id != null) | {
+        source: "nasa",
+        id: .data[0].nasa_id,
+        theme: $theme,
+        full: ("https://images-assets.nasa.gov/image/" + .data[0].nasa_id + "/" + .data[0].nasa_id + "~orig.jpg"),
+        alt: ((.links[0].href // "") | sub("~medium"; "~orig")),
+        thumb: (.links[0].href // ""),
+        width: 0,
+        height: 0,
+        credit: (((.data[0].title // "") + ", NASA") | sub("^, "; "")),
+        link: ("https://images.nasa.gov/details/" + .data[0].nasa_id),
+        license: "NASA, public domain"
+      }]' 2>/dev/null)
+  [[ -n $rows && $rows != "null" ]] || { printf '[]'; return 0; }
+  probe_rows "$rows" "$min_w" "$min_h"
+}
+
+# ESA/Hubble publishes an RSS feed of its releases, and every release has a
+# large rendering beside the news size. The archive is space and nothing else,
+# which is what the theme says.
+candidates_hubble() {
+  local theme=$1 min_w=$2 min_h=$3 ids rows
+  ids=$(curl_json "https://esahubble.org/images/feed/" | tr -d '\n' |
+    sed 's/<item>/\n<item>/g' | sed -n '2,$p' |
+    sed -n 's|.*<link>[^<]*/images/\([a-z0-9]\{4,\}\)/</link>.*|\1|p' |
+    sort -u)
+  [[ -n $ids ]] || { printf '[]'; return 0; }
+  rows=$(printf '%s\n' "$ids" | jq -R -s --arg theme "$theme" '
+    split("\n") | map(select(length > 2)) | map({
+      source: "hubble",
+      id: .,
+      theme: $theme,
+      full: ("https://cdn.esahubble.org/archives/images/large/" + . + ".jpg"),
+      alt: ("https://cdn.esahubble.org/archives/images/news/" + . + ".jpg"),
+      thumb: ("https://cdn.esahubble.org/archives/images/news/" + . + ".jpg"),
+      width: 0,
+      height: 0,
+      credit: "ESA/Hubble",
+      link: ("https://esahubble.org/images/" + . + "/"),
+      license: "ESA/Hubble, CC BY 4.0"
+    })')
+  probe_rows "$rows" "$min_w" "$min_h"
+}
+
 # Picsum serves Unsplash photographs through its own API with nothing to sign
 # up for. The picture is requested at the screen's own size, so the server does
 # the crop instead of the renderer and nothing is upscaled.
@@ -882,13 +974,15 @@ fetch_candidates() {
   min_w=$(dimension "$min_w") || min_w=1920
   min_h=$(dimension "$min_h") || min_h=1080
   case $src in
-    bing)      rows=$(candidates_bing) ;;
+    bing)      rows=$(candidates_bing "$theme") ;;
     wikimedia) rows=$(candidates_wikimedia "$theme" "$min_w" "$min_h") ;;
     noirlab)   rows=$(candidates_noirlab "$theme" "$min_w" "$min_h") ;;
     konachan)  rows=$(candidates_konachan "$theme" "$min_w" "$min_h") ;;
     yandere)   rows=$(candidates_yandere "$theme" "$min_w" "$min_h") ;;
     omarchy)   rows=$(candidates_omarchy "$theme" "$min_w" "$min_h") ;;
     picsum)    rows=$(candidates_picsum "$min_w" "$min_h") ;;
+    nasa)      rows=$(candidates_nasa "$theme" "$min_w" "$min_h") ;;
+    hubble)    rows=$(candidates_hubble "$theme" "$min_w" "$min_h") ;;
     wallhaven) rows=$(candidates_wallhaven "$theme" "$min_w" "$min_h") ;;
     local)     rows=$(candidates_local "$theme" "$min_w" "$min_h") ;;
     *)         printf '[]'; return 0 ;;

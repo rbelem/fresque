@@ -21,7 +21,7 @@ then takes a new one every day.
 
 | | |
 |---|---|
-| **Nine sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, NOIRLab's image of the week for the night sky, the wallpapers Omarchy itself ships, Konachan and Yande.re anime art, Unsplash photographs served through Picsum, Wallhaven's safe toplist, and a folder of your own pictures |
+| **Eleven sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, NOIRLab's image of the week, the wallpapers Omarchy itself ships, Konachan and Yande.re anime art, Unsplash photographs served through Picsum, Wallhaven's safe toplist, NASA's image library, ESA/Hubble's releases, and a folder of your own pictures |
 | **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, the file's real size is measured again after the download, and obvious non-photographs (museum specimens, murals, maps, diagrams) are filtered out by keyword |
 | **Nothing you would not want decoded** | A picture is kept at twice your screen at most, never above 50 megapixels or 12000 pixels on a side, and it is re-encoded on the way in. The shell only ever opens a plain JPEG this plugin wrote, so the metadata a file can carry, the canvas it can claim and the colours it can declare stay in the short lived tool that read it |
 | **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen, and a source that cannot serve the chosen themes is not queried at all. Switching every theme off means nothing is filtered, rather than nothing is allowed |
@@ -45,13 +45,15 @@ author and its licence in the panel.
 
 | Source | What it serves | Licence |
 |---|---|---|
-| Bing | The day's photograph, served with the Photos theme. Nothing else is claimed about it, since the picture is chosen by someone else. Bing offers eight days and adds one a day, so each photograph is served once and never comes back | Bing, credited to its author |
+| Bing | The day's photograph, offered under every theme because it cannot be classified before it is fetched: it is usually a landscape, an animal or a building. Nothing else is claimed about it, since the picture is chosen by someone else. Bing offers eight days and adds one a day, so each photograph is served once and never comes back | Bing, credited to its author |
 | Wikimedia Commons | Featured and quality photography, and featured galaxy pictures for Space | Free licence per image, shown in the panel |
 | NOIRLab | The image of the week: the Milky Way over an observatory, a comet, an eclipse, the odd galaxy. One new picture a week, so it is asked less often than the sources with thousands, and none of its pictures is served twice | NOIRLab/NSF/AURA, CC BY 4.0 |
 | Omarchy | The wallpapers shipped with your Omarchy themes, plus the ones in your own theme folders. Already on the disk, so nothing is downloaded and nothing is copied: the picture is put on screen where it lies, and "Not this one" blocks it without deleting it | Shipped with Omarchy |
 | Konachan, Yande.re | Anime art at 4K and beyond, for the Anime theme | Fan art, credited to its artist |
 | Unsplash via Picsum | Photographs, theme "Photos" | Unsplash License |
 | Wallhaven | The safe pool: the last year's top landscape wallpapers, optionally narrowed by a search phrase (`wallhavenQuery`) | Wallhaven, credited to its uploader |
+| NASA | The Image and Video Library, public domain and keyless: nebulae and galaxies for Space, the Earth seen from orbit for Nature. The originals are measured before they are downloaded | NASA, public domain |
+| ESA/Hubble | The release feed: the archive's large rendering of each new image. Space, and nothing else | ESA/Hubble, CC BY 4.0 |
 | Your pictures | A folder of your own (default `~/Pictures/Wallpapers`, set with `localDir`), used where it lies. No request, so it rotates offline | Your own |
 
 Every request to Konachan and Yande.re is pinned to the safe rating and to your
@@ -102,7 +104,7 @@ fresque config set keepLast 50          # how many images the library may hold
 fresque config set favoritesOnly true   # rotate over the favorites only
 fresque config set language ja          # auto or en zh hi es fr ar pt ru ja de it ko tr
 fresque config set themes.space false   # turn a theme off (nature space architecture animals photos anime)
-fresque config set sources.noirlab false # turn a source off (bing wikimedia noirlab konachan yandere picsum wallhaven omarchy local)
+fresque config set sources.noirlab false # turn a source off (bing wikimedia noirlab konachan yandere picsum wallhaven nasa hubble omarchy local)
 fresque config set wallhavenQuery mountains  # narrow the Wallhaven pool to a search phrase
 fresque config set localDir ~/Pictures/Wallpapers  # the folder the "Your pictures" source reads
 ```

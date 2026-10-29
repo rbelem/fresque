@@ -9,13 +9,15 @@
 // it is only used when no theme filter is set, rather than being allowed to
 // slip a landscape into a request for animals or space.
 var SOURCES = [
-  { id: "bing",      label: "Bing",      themes: ["photos"] },
+  { id: "bing",      label: "Bing",      themes: ["nature", "space", "architecture", "animals", "photos", "anime"] },
   { id: "wikimedia", label: "Wikimedia", themes: ["nature", "space", "architecture", "animals"] },
   { id: "noirlab",   label: "NOIRLab",   themes: ["space"] },
   { id: "konachan",  label: "Konachan",  themes: ["anime"] },
   { id: "yandere",   label: "Yande.re",  themes: ["anime"] },
   { id: "picsum",    label: "Unsplash",  themes: ["photos"] },
   { id: "wallhaven", label: "Wallhaven", themes: ["photos"] },
+  { id: "nasa",      label: "NASA",      themes: ["space", "nature"] },
+  { id: "hubble",    label: "ESA/Hubble", themes: ["space"] },
   { id: "local",     label: "Your pictures", themes: ["nature", "space", "architecture", "animals", "photos", "anime"] },
   { id: "omarchy",   label: "Omarchy",   themes: ["photos"] }
 ]

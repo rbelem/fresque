@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.shika34.fresque",
   "name": "Fresque",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "author": "Shika34",
   "license": "MIT",
-  "description": "A wallpaper for your Omarchy desktop, at least as large as your screen and changing on its own: nine sources without an API key, a theme filter, favorites, and a small local library. Nothing to configure.",
+  "description": "A wallpaper for your Omarchy desktop, at least as large as your screen and changing on its own: eleven sources without an API key, a theme filter, favorites, and a small local library. Nothing to configure.",
   "homepage": "https://github.com/Shika34/fresque",
   "repository": "https://github.com/Shika34/fresque",
   "keywords": [
